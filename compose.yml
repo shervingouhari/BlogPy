@@ -1,0 +1,100 @@
+services:
+    postgres:
+        container_name: blogpy_postgres_container
+        image: postgres:16.3-alpine3.20
+        restart: unless-stopped
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "pg_isready -h postgres -U ${POSTGRES_USER} -d ${POSTGRES_DB}"
+                ]
+            interval: 5s
+            timeout: 5s
+            retries: 12
+        environment:
+            - POSTGRES_USER=${POSTGRES_USER}
+            - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+            - POSTGRES_DB=${POSTGRES_DB}
+        volumes:
+            - blogpy_data_volume:/var/lib/postgresql/data/
+        networks:
+            - blogpy_postgres_network
+    django:
+        container_name: blogpy_django_container
+        image: blogpy_django_image
+        restart: unless-stopped
+        build:
+            context: django/
+            args:
+                - GID=${GID}
+                - UID=${UID}
+        depends_on:
+            postgres:
+                condition: service_healthy
+        environment:
+            - DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE}
+            - SECRET_KEY=${SECRET_KEY}
+            - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+            - SECRET_URL_PREFIX=${SECRET_URL_PREFIX}
+            - GUNICORN_WORKERS=${GUNICORN_WORKERS}
+            - DATABASE_URL=${DATABASE_URL}
+        volumes:
+            - blogpy_static_volume:/django/static/
+            - blogpy_media_volume:/django/media/
+        networks:
+            - blogpy_postgres_network
+            - blogpy_nginx_network
+    nginx:
+        container_name: blogpy_nginx_container
+        image: blogpy_nginx_image
+        restart: unless-stopped
+        build: nginx/
+        ports:
+            - 80:80
+            - 443:443
+        depends_on:
+            - django
+        environment:
+            - DOMAIN=${DOMAIN}
+        volumes:
+            - blogpy_static_volume:/django/static/
+            - blogpy_media_volume:/django/media/
+            - blogpy_ssl_volume:/etc/nginx/conf.d/ssl/
+            - blogpy_www_volume:/vol/www/
+            - blogpy_letsencrypt_volume:/etc/letsencrypt/
+        networks:
+            - blogpy_nginx_network
+    certbot:
+        container_name: blogpy_certbot_container
+        image: blogpy_certbot_image
+        build: certbot/
+        depends_on:
+            - nginx
+        environment:
+            - DOMAIN=${DOMAIN}
+            - EMAIL=${EMAIL}
+        volumes:
+            - blogpy_www_volume:/vol/www/
+            - blogpy_letsencrypt_volume:/etc/letsencrypt/
+        networks:
+            - blogpy_nginx_network
+
+volumes:
+    blogpy_data_volume:
+        name: blogpy_data_volume
+    blogpy_static_volume:
+        name: blogpy_static_volume
+    blogpy_media_volume:
+        name: blogpy_media_volume
+    blogpy_ssl_volume:
+        name: blogpy_ssl_volume
+    blogpy_www_volume:
+        name: blogpy_www_volume
+    blogpy_letsencrypt_volume:
+        name: blogpy_letsencrypt_volume
+networks:
+    blogpy_postgres_network:
+        name: blogpy_postgres_network
+    blogpy_nginx_network:
+        name: blogpy_nginx_network
